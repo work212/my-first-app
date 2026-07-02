@@ -1,5 +1,15 @@
-import dayjs from 'dayjs'
+import { createClient } from '@supabase/supabase-js'
 
-document.querySelector('button').addEventListener('click', () => {
-  document.getElementById('result').textContent = dayjs().format('YYYY年MM月DD日')
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_KEY
+)
+
+const { data } = await supabase.from('tasks').select('*')
+
+const result = document.getElementById('result')
+data.forEach(task => {
+  const li = document.createElement('li')
+  li.textContent = task.title
+  result.appendChild(li)
 })
