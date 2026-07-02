@@ -1,5 +1,5 @@
 import dayjs from 'dayjs'
 
-window.showDate = () => {
+document.querySelector('button').addEventListener('click', () => {
   document.getElementById('result').textContent = dayjs().format('YYYY年MM月DD日')
-}
+})
