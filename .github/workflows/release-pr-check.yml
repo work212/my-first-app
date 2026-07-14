@@ -7,7 +7,7 @@ on:
 
 jobs:
   check-other-release-branches:
-    if: contains(github.head_ref, 'release/')
+    # 必須チェックに登録するため全PRで起動し、release/以外はスクリプト内で即通過させる
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -21,6 +21,12 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
+          # release/以外のPRはチェック対象外として通過
+          case "$HEAD" in
+            *release/*) ;;
+            *) echo "対象外: release/ブランチのPRではありません"; exit 0 ;;
+          esac
+
           # マージ元以外のrelease/ブランチをリモートから検索
           OTHERS=$(gh api "repos/$REPO/branches" --paginate --jq '.[].name' | grep 'release/' | grep -vx "$HEAD" || true)
 
