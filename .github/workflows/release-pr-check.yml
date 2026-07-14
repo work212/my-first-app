@@ -1,0 +1,55 @@
+name: Release PR check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+
+jobs:
+  check-other-release-branches:
+    if: contains(github.head_ref, 'release/')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Check other release branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD: ${{ github.head_ref }}
+          PR: ${{ github.event.pull_request.number }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          # マージ元以外のrelease/ブランチをリモートから検索
+          OTHERS=$(gh api "repos/$REPO/branches" --paginate --jq '.[].name' | grep 'release/' | grep -vx "$HEAD" || true)
+
+          if [ -z "$OTHERS" ]; then
+            echo "該当なし: 他にrelease/ブランチは存在しません"
+            exit 0
+          fi
+
+          # 確認済ラベルが付いていればチェック通過
+          if echo ",$LABELS," | grep -q ",取り込み確認済,"; then
+            echo "「取り込み確認済」ラベルが付いているためチェックを通過します"
+            exit 0
+          fi
+
+          # ラベルが未作成の場合に備えて作成しておく(既存ならスキップ)
+          gh label create "取り込み確認済" --repo "$REPO" \
+            --color 0e8a16 --description "他のrelease/ブランチへの取り込み要否を確認済" 2>/dev/null || true
+
+          MARKER="<!-- release-pr-check -->"
+          BODY="$MARKER"$'\n'"⚠️ 以下のrelease/ブランチが存在します。今回のマージ内容をこれらのブランチにも取り込む必要があるかご確認ください。"$'\n\n'
+          while IFS= read -r br; do
+            BODY="$BODY- \`$br\`"$'\n'
+          done <<< "$OTHERS"
+          BODY="$BODY"$'\n'"確認できたら、このPRに **取り込み確認済** ラベルを付けてください。チェックが再実行されてマージできるようになります。"
+
+          # 同じ警告コメントが既にある場合は重複投稿しない
+          if ! gh pr view "$PR" --repo "$REPO" --json comments --jq '.comments[].body' | grep -q "$MARKER"; then
+            gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+          fi
+
+          echo "::error::他のrelease/ブランチが存在します。取り込み要否を確認後、PRに「取り込み確認済」ラベルを付けてください。"
+          exit 1
