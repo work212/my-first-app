@@ -1,0 +1,108 @@
+name: Release PR check
+
+# ============================================================
+# release/ブランチのPRで、他のrelease/ブランチへの取り込み確認を促すチェック
+#
+# 【デフォルトの動作(警告のみモード)】
+# - release/ を含むブランチからのPR: 他にrelease/ブランチがあれば
+#   警告コメントを投稿する。チェックは緑✓のままでマージはブロックしない
+# - それ以外のブランチからのPR: 何もしない(「対象外」として通過)
+#
+# 【ラベルチェック(マージブロック)を有効にする場合】
+# 下記の「★ラベルチェック有効化」マーカーが付いた3箇所のコメントを外すと、
+# 他のrelease/ブランチがある間はチェックが赤✗になり、
+# PRに「取り込み確認済」ラベルを付けるまで通らなくなる。
+# さらにマージボタン自体を押せなくするには、ブランチ保護の設定が必要:
+#   Settings → Branches → main の classic branch protection rule で
+#   - 「Require status checks to pass before merging」を有効にし、
+#     必須チェックとして check-other-release-branches を検索して選択する
+#     (チェックボックスを入れるだけでは無効。選択するまでが必須)
+#   - 「Do not allow bypassing the above settings」も有効にする
+#     (これが無いと管理者は赤✗でもマージできてしまう)
+#
+# 【注意: 必須チェックの罠】
+# 必須チェックに登録した状態で、ワークフローが起動しないPRがあると、
+# そのPRは「Expected — チェック待ち」のまま永遠にマージできなくなる。
+# そのためジョブはrelease/以外のPRでも必ず起動させ、スクリプト内で
+# 「対象外」として即通過させている。以下のようなjob単位のifで絞ってはいけない:
+#
+#   check-other-release-branches:
+#     if: contains(github.head_ref, 'release/')   # ← これをやるとrelease/以外のPRが詰む
+#
+# 同じ理由で、このワークフローはmainに存在させておくこと。
+# 特定のブランチにしか無いと、他のブランチからのPRでは起動せず詰む。
+# ============================================================
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+
+jobs:
+  check-other-release-branches:
+    # 必須チェックに登録するため全PRで起動し、release/以外はスクリプト内で即通過させる
+    # (冒頭の【注意: 必須チェックの罠】参照)
+    runs-on: ubuntu-latest
+    # 警告コメントの投稿(pull-requests)とラベル自動作成(issues)のための権限追加
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Check other release branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD: ${{ github.head_ref }}
+          PR: ${{ github.event.pull_request.number }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          # release/以外のPRはチェック対象外として通過
+          case "$HEAD" in
+            *release/*) ;;
+            *) echo "対象外: release/ブランチのPRではありません"; exit 0 ;;
+          esac
+
+          # マージ元以外のrelease/ブランチをリモートから検索
+          OTHERS=$(gh api "repos/$REPO/branches" --paginate --jq '.[].name' | grep 'release/' | grep -vx "$HEAD" || true)
+
+          if [ -z "$OTHERS" ]; then
+            echo "該当なし: 他にrelease/ブランチは存在しません"
+            exit 0
+          fi
+
+          # ===== ★ラベルチェック有効化(1/3): ここのコメントを外す =====
+          # 「取り込み確認済」ラベルが付いていればチェック通過
+          #if echo ",$LABELS," | grep -q ",取り込み確認済,"; then
+          #  echo "「取り込み確認済」ラベルが付いているためチェックを通過します"
+          #  exit 0
+          #fi
+          #
+          # ラベルが未作成の場合に備えて作成しておく(既存ならスキップ)
+          #gh label create "取り込み確認済" --repo "$REPO" \
+          #  --color 0e8a16 --description "他のrelease/ブランチへの取り込み要否を確認済" 2>/dev/null || true
+          # ===== ★ここまで =====
+
+          MARKER="<!-- release-pr-check -->"
+          BODY="$MARKER"$'\n'"⚠️ 以下のrelease/ブランチが存在します。今回のマージ内容をこれらのブランチにも取り込む必要があるかご確認ください。"$'\n\n'
+          while IFS= read -r br; do
+            BODY="$BODY- \`$br\`"$'\n'
+          done <<< "$OTHERS"
+
+          # ===== ★ラベルチェック有効化(2/3): ここのコメントを外す =====
+          # 警告コメントにラベルの案内文を追加
+          #BODY="$BODY"$'\n'"確認できたら、このPRに **取り込み確認済** ラベルを付けてください。チェックが再実行されてマージできるようになります。"
+          # ===== ★ここまで =====
+
+          # 同じ警告コメントが既にある場合は重複投稿しない
+          if ! gh pr view "$PR" --repo "$REPO" --json comments --jq '.comments[].body' | grep -q "$MARKER"; then
+            gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+          fi
+
+          # ===== ★ラベルチェック有効化(3/3): ここのコメントを外す =====
+          # ラベルが付くまでチェックを赤✗にしてマージをブロックする
+          #echo "::error::他のrelease/ブランチが存在します。取り込み要否を確認後、PRに「取り込み確認済」ラベルを付けてください。"
+          #exit 1
+          # ===== ★ここまで =====
+
+          echo "警告のみ: コメントを投稿しました(チェックは通過します)"
+          exit 0
