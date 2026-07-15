@@ -6,7 +6,8 @@ name: Release PR check
 # 【デフォルトの動作(警告のみモード)】
 # - release/ を含むブランチからのPR: 他にrelease/ブランチがあれば
 #   警告コメントを投稿する。チェックは緑✓のままでマージはブロックしない
-# - それ以外のブランチからのPR: 何もしない(「対象外」として通過)
+# - それ以外のブランチからのPR: job単位のifでスキップされ、
+#   ランナーが起動しないためActionsの実行時間を消費しない(0分)
 #
 # 【ラベルチェック(マージブロック)を有効にする場合】
 # 下記の「★ラベルチェック有効化」マーカーが付いた3箇所のコメントを外すと、
@@ -21,16 +22,13 @@ name: Release PR check
 #     (これが無いと管理者は赤✗でもマージできてしまう)
 #
 # 【注意: 必須チェックの罠】
-# 必須チェックに登録した状態で、ワークフローが起動しないPRがあると、
+# 必須チェックに登録した状態で「ワークフロー自体が起動しない」PRがあると、
 # そのPRは「Expected — チェック待ち」のまま永遠にマージできなくなる。
-# そのためジョブはrelease/以外のPRでも必ず起動させ、スクリプト内で
-# 「対象外」として即通過させている。以下のようなjob単位のifで絞ってはいけない:
-#
-#   check-other-release-branches:
-#     if: contains(github.head_ref, 'release/')   # ← これをやるとrelease/以外のPRが詰む
-#
-# 同じ理由で、このワークフローはmainに存在させておくこと。
-# 特定のブランチにしか無いと、他のブランチからのPRでは起動せず詰む。
+# 詰むのはworkflowレベルで起動しない場合:
+#   - このファイルがPRのマージ結果に存在しない(mainにも元ブランチにも無い)
+#   - on.pull_request の branches / paths フィルタで除外される
+# 一方、下記のようなjob単位のifによるスキップは「skipped = 成功扱い」に
+# なるため詰まない。ランナーも起動しないので課金もされず、安全かつ低コスト。
 # ============================================================
 
 on:
@@ -40,8 +38,9 @@ on:
 
 jobs:
   check-other-release-branches:
-    # 必須チェックに登録するため全PRで起動し、release/以外はスクリプト内で即通過させる
-    # (冒頭の【注意: 必須チェックの罠】参照)
+    # release/を含むPRのみ起動。それ以外はskippedになりランナー起動なし(0分)
+    # skippedは必須チェック登録時も成功扱いなので詰まない(冒頭の【注意】参照)
+    if: contains(github.head_ref, 'release/')
     runs-on: ubuntu-latest
     # 警告コメントの投稿(pull-requests)とラベル自動作成(issues)のための権限追加
     permissions:
@@ -56,12 +55,6 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          # release/以外のPRはチェック対象外として通過
-          case "$HEAD" in
-            *release/*) ;;
-            *) echo "対象外: release/ブランチのPRではありません"; exit 0 ;;
-          esac
-
           # マージ元以外のrelease/ブランチをリモートから検索
           OTHERS=$(gh api "repos/$REPO/branches" --paginate --jq '.[].name' | grep 'release/' | grep -vx "$HEAD" || true)
 
