@@ -1,0 +1,13 @@
+name: Test public reusable call
+
+# 切り分け用の一時テストファイル。work212/testnote(private)のreusable
+# workflowが「workflow was not found」で解決できない問題を切り分けるため、
+# publicなwork212/lessonのreusable workflowを同じ形式で呼び出して比較する。
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    uses: work212/lesson/.github/workflows/test-reusable.yml@master
