@@ -1,0 +1,17 @@
+name: Release branch auto issue
+
+# ロジック本体は work212/testnote の auto-issue-reusable.yml (workflow_call)に分離。
+# create イベントは常にデフォルトブランチのワークフロー定義が使われるため、
+# このcaller自体はmainに配置しないと動作しない(featureブランチではテスト不可)。
+
+on:
+  create:
+
+jobs:
+  create-issue:
+    if: github.event.ref_type == 'branch' && contains(github.event.ref, 'release/')
+    permissions:
+      issues: write
+    uses: work212/testnote/.github/workflows/auto-issue-reusable.yml@feature/github_action
+    with:
+      branch: ${{ github.event.ref }}

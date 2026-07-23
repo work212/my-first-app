@@ -1,0 +1,54 @@
+name: Release PR check
+
+# ============================================================
+# release/ブランチのPRで、他のrelease/ブランチへの取り込み確認を促すチェック
+# ロジック本体は release-pr-check-reusable.yml (workflow_call)に分離。
+# 200リポジトリ展開時は、本体を会社の共通リポジトリに置き、
+# 各リポジトリにはこのファイルの uses: 先だけ書き換えて配布する想定。
+#
+# 【デフォルトの動作(警告のみモード)】
+# - release/ を含むブランチからのPR: 他にrelease/ブランチがあれば
+#   警告コメントを投稿する。チェックは緑✓のままでマージはブロックしない
+# - それ以外のブランチからのPR: job単位のifでスキップされ、
+#   ランナーが起動しないためActionsの実行時間を消費しない(0分)
+#
+# 【ラベルチェック(マージブロック)を有効にする場合】
+# release-pr-check-reusable.yml内の「★ラベルチェック有効化」マーカーが
+# 付いた3箇所のコメントを外すと、他のrelease/ブランチがある間はチェックが
+# 赤✗になり、PRに「取り込み確認済」ラベルを付けるまで通らなくなる。
+# さらにマージボタン自体を押せなくするには、ブランチ保護の設定が必要:
+#   Settings → Branches → main の classic branch protection rule で
+#   - 「Require status checks to pass before merging」を有効にし、
+#     必須チェックとして check-other-release-branches を検索して選択する
+#     (チェックボックスを入れるだけでは無効。選択するまでが必須)
+#   - 「Do not allow bypassing the above settings」も有効にする
+#     (これが無いと管理者は赤✗でもマージできてしまう)
+#
+# 【注意: 必須チェックの罠】
+# 必須チェックに登録した状態で「ワークフロー自体が起動しない」PRがあると、
+# そのPRは「Expected — チェック待ち」のまま永遠にマージできなくなる。
+# 詰むのはworkflowレベルで起動しない場合:
+#   - このファイルがPRのマージ結果に存在しない(mainにも元ブランチにも無い)
+#   - on.pull_request の branches / paths フィルタで除外される
+# 一方、下記のようなjob単位のifによるスキップは「skipped = 成功扱い」に
+# なるため詰まない。ランナーも起動しないので課金もされず、安全かつ低コスト。
+# ============================================================
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+
+jobs:
+  check-other-release-branches:
+    # release/を含むPRのみ起動。それ以外はskippedになりランナー起動なし(0分)
+    # skippedは必須チェック登録時も成功扱いなので詰まない(冒頭の【注意】参照)
+    if: contains(github.head_ref, 'release/')
+    permissions:
+      pull-requests: write
+      issues: write
+    uses: work212/testnote/.github/workflows/release-pr-check-reusable.yml@feature/github_action
+    with:
+      head_ref: ${{ github.head_ref }}
+      pr_number: ${{ github.event.pull_request.number }}
+      labels: ${{ join(github.event.pull_request.labels.*.name, ',') }}
